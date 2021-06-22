@@ -9,7 +9,7 @@ import time
 BASE_URL = "https://tv7api2.tv.init7.net/api/"
 DATE_FORMAT = '%Y%m%d%H%M%S%z'
 MAX_DOWNLOADS = 10
-MAX_FILE_AGE = 36*60*60
+MAX_FILE_AGE = 48*60*60
 TMP_FOLDER = "tmp/"
 arg_parser = argparse.ArgumentParser(
     description='fetch epg data from init7 and return it')
@@ -21,13 +21,11 @@ args = vars(arg_parser.parse_args())
 def addChannels(root_elem, channels_data):
     for result in channels_data:
         channel = etree.Element("channel")
-        channel.set('id',  result['epg_id'])
+        channel.set('id',  result['canonical_name'])
         name_elem = etree.SubElement(channel, "display-name")
         name_elem.text = result['name']
-        epg_id_elem = etree.SubElement(channel, "display-name")
-        epg_id_elem.text = result['epg_id']
-        # ordernum_elem = etree.SubElement(channel, "display-name")
-        # ordernum_elem.text = str(result['ordernum'])
+        ordernum_elem = etree.SubElement(channel, "display-name")
+        ordernum_elem.text = str(result['ordernum'])  
 
         icon_elem = etree.SubElement(channel, "icon")
         icon_elem.set('src', result['logo'])
@@ -47,7 +45,7 @@ def addProgrammes(root_elem, programme_data):
                 programme.set("stop", stopTime.strftime(DATE_FORMAT))
                 continue
             elif key == 'channel':
-                programme.set("channel",  value['epg_id'])
+                programme.set("channel",value['canonical_name'])
                 lang = etree.SubElement(programme, "language")
                 lang.text = value['language']
                 programme.append(lang)
@@ -127,6 +125,13 @@ def _file_age_in_seconds(pathname):
     return time.time() - os.path.getmtime(pathname)
 
 
+def is_valid_json(myjson):
+  try:
+    json_object = json.loads(myjson)
+  except ValueError as e:
+    return False
+  return True
+
 downloadCount = 0
 
 
@@ -136,8 +141,9 @@ def _downloadFile(filename, url):
         if args['debug']:
             print("downloading ", url)
         r = requests.get(url, allow_redirects=True)
-        open(filename, 'wb').write(r.content)
-        time.sleep(30)
+        if(is_valid_json(r.content)):
+            open(filename, 'wb').write(r.content)
+        time.sleep(1)
         downloadCount = downloadCount+1
     else:
         if args['debug']:
@@ -170,16 +176,27 @@ with open(filename) as json_file:
         # @GET("epg/")
         # Call<EPGListResponse> getEPG(@Query("channel") String paramString);
         # curl "${BASE_URL}epg/?channel=4c8a7d39-009d-4835-b6f9-69c7268fd9d4" > getEPG-channel.json
-        url = BASE_URL+"epg/?channel="+channel_id+"&now__gte=true"
+        url = BASE_URL+"epg/?channel="+channel_id+"&limit=999"
 
         filename = os.path.join(
             TMP_FOLDER, 'getEPG-'+channel_id + ".json")
         _downloadFile(filename, url)
 
         with open(filename) as json_file:
-            programme_data = json.load(json_file)
-            addProgrammes(root, programme_data['results'])
 
+            try:
+                programme_data = json.load(json_file)
+
+                if 'results' in programme_data:
+                    addProgrammes(root, programme_data['results'])
+                else:
+                    if args['debug']:
+                        print(programme_data)
+            except json.JSONDecodeError as e:
+                if args['debug']:
+                    print(filename + ": ")
+                    print(e)
+ 
     doctype = '<!DOCTYPE tv SYSTEM "https://github.com/XMLTV/xmltv/raw/master/xmltv.dtd">'
     document_str = etree.tostring(
         root, pretty_print=True, xml_declaration=True, encoding="UTF-8", doctype=doctype)
