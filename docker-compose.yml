@@ -1,0 +1,24 @@
+version: "2.1"
+services:
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: scheduler
+    depends_on:
+      - tv7epg
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    labels:
+      ofelia.job-run.tv7epg.schedule: "@every hour"
+      ofelia.job-run.tv7epg.container: "tv7epg"
+  tv7epg:
+    build: https://github.com/chkuendig/tv7-epg-parser.git
+    container_name: tv7epg
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+      - RUN_OPTS= #optional
+    volumes:
+      - <HOMEDIR>/tmp:/usr/src/app/tmp
+      - <TVH_HOMEDIR>/tvheadend/epggrab/:/usr/src/app/epggrab

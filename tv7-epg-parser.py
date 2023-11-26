@@ -4,6 +4,10 @@ import argparse
 from lxml import etree
 import dateutil.parser
 import requests
+from stat import S_ISSOCK
+from datetime import timedelta
+import socket
+
 import time
 
 BASE_URL = "https://tv7api2.tv.init7.net/api/"
@@ -11,12 +15,12 @@ DATE_FORMAT = '%Y%m%d%H%M%S%z'
 MAX_DOWNLOADS = 10
 MAX_FILE_AGE = 48*60*60
 TMP_FOLDER = "tmp/"
+TVH_XMLTV_SOCKET = "epggrab/xmltv.sock"
 arg_parser = argparse.ArgumentParser(
     description='fetch epg data from init7 and return it')
 arg_parser.add_argument('--debug', '-d', action='store_true',
                         help='Enable Debugging')
 args = vars(arg_parser.parse_args())
-
 
 def addChannels(root_elem, channels_data):
     for result in channels_data:
@@ -41,6 +45,14 @@ def addProgrammes(root_elem, programme_data):
             elif key == 'timeslot':
                 startTime = dateutil.parser.isoparse(value['lower'])
                 stopTime = dateutil.parser.isoparse(value['upper'])
+
+                '''
+                if result['channel']['canonical_name'] == "More4.uk":
+                    if args['debug']:
+                        print("Changing times for "+result['channel']['name'] )
+                    startTime = startTime +  timedelta(hours=1)
+                    stopTime = startTime +  timedelta(hours=1)
+                '''
                 programme.set("start", startTime.strftime(DATE_FORMAT))
                 programme.set("stop", stopTime.strftime(DATE_FORMAT))
                 continue
@@ -147,7 +159,7 @@ def _downloadFile(filename, url):
         downloadCount = downloadCount+1
     else:
         if args['debug']:
-            print("skipping ", url)
+            print("skipping %s already downloaded to %s"%( url, filename))
 
 # @GET("allowed/")
 # Call<AllowedResponse> allowed();
@@ -194,8 +206,10 @@ with open(filename) as json_file:
                         print(programme_data)
             except json.JSONDecodeError as e:
                 if args['debug']:
-                    print(filename + ": ")
+                    print(filename + " parsing error: ")
                     print(e)
+                    print("deleting file...")
+                    os.remove(filename)
  
     doctype = '<!DOCTYPE tv SYSTEM "https://github.com/XMLTV/xmltv/raw/master/xmltv.dtd">'
     document_str = etree.tostring(
@@ -205,5 +219,37 @@ with open(filename) as json_file:
     with open(xmltv_file, 'wb') as f:
         f.write(document_str)
 
+    '''
     with open(xmltv_file, 'r') as fin:
         print(fin.read())
+    '''
+
+    if os.path.exists(TVH_XMLTV_SOCKET):
+        if S_ISSOCK(os.stat(TVH_XMLTV_SOCKET).st_mode):
+            if args['debug']:
+                print("Socket exists")
+                
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+
+            try:
+                # Connect to server and send data
+                if args['debug']:
+                    print ("Attempting connection")
+                sock.connect(TVH_XMLTV_SOCKET)
+                if args['debug']:
+                    print ("Sending XMLTV string")
+
+                with open(xmltv_file, 'r') as fin:
+                     sock.sendall(fin.read().encode())
+                if args['debug']:
+                    print( "XMLTV sent")
+
+            finally:
+                sock.close()
+        else: 
+            if args['debug']:
+                print("XML Socket file exists but isn't socket")
+    else:
+        if args['debug']:
+            print("XML Socket file doesn't exist")
+        
