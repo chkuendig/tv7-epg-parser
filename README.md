@@ -1,73 +1,14 @@
-# tv7-epg-parser
+# ![TV7](logo.png) EPG Parser
 
+This is a python script to download the official EPG data from the tv7 backend and export it as XMLTV. The backend API was reverse-engineered from the official Android TV app - for more information check out the the writeup on personal website: [February 6, 2020: Extracting EPG data from the TV7 IPTV service](https://christian.kuendig.info/posts/2020-02-tv7-epg/).
 
-# public API:
+It's designed to include all data available (including picons and channel numbers), and includes caching and rate-limiting to avoid excessive polling the backend no matter how often it is run, making it easy to setup as a scheduled job. It can directly pipe data into the xmltv grabber of Tvheadend via Unix domain sockets. 
 
- https://www.init7.net/en/support/faq/TV-andere-Geraete/:
+# Usage
+- For a dockerized deployment (recommended), see [docker-compose.yml](docker-compose.yml) for a sample.
 
-```
-wget https://api.init7.net/tvchannels.xspf
-wget https://api.init7.net/tvchannels.m3u
-```
+- To run it directly, install the python requirements (`pip3 install -r requirements.txt`) and then  `python3 tv7-epg-parser.py`.
 
-# from Android TV app:
-From `core/api/TvApiFactory.java`:
-```
-BASE_URL="https://tv7api2.tv.init7.net/api/"
-```
-
-From `core/api/TvApi.java`:
-```
-# @GET("allowed/")
-#  Call<AllowedResponse# allowed();
-curl "${BASE_URL}allowed/" # allowed.json
-```
-
-```
-# @GET("epg/?now__lte=true&now__gte=true")
-# Call<EPGListResponse# getCurrentEPG(@Query("channel") String paramString);
-curl "${BASE_URL}/epg/?now__lte=true&now__gte=true" # getCurrentEPG.json
-```
-
-```
-# @GET("epg/")
-#  Call<EPGListResponse# getEPG(@Query("channel") String paramString);
- curl "${BASE_URL}epg/?channel=4c8a7d39-009d-4835-b6f9-69c7268fd9d4" # getEPG-channel.json
-```
-
-```  
-#  @GET("epg/")
-#  Call<EPGListResponse# getEPG(@Query("channel") String paramString1, @Query("limit") int paramInt1, @Query("offset") int paramInt2, @Header("If-None-Match") String paramString2);
-```
-
-```  
-#  @GET("epg/")
-#  Call<EPGListResponse# getEPG(@Query("channel") String paramString, @Query("limit") int paramInt, @Query("now__lte") boolean paramBoolean1, @Query("now__gte") boolean paramBoolean2);
-```
-
-```  
-#  @GET("replay/")
-#  Call replayData(String paramString, Date paramDate1, Date paramDate2);
-```
-# @GET("tvchannel/")
-#  Call<TvChannelListResponse> tvChannelList();
-curl "${BASE_URL}tvchannel/" > tvChannelList.json
-```
-# JSON Samples
-
-get all epg titles for currently running
-```
-jq ".results[].title" getCurrentEPG.json 
-```
-
-show full channel list
-```
-jq '.results[] | "\(.ordernum) \(.name)"' tvChannelList.json | sort
-```
+- The script is quiet and the only output you get is the xmltv, this should make it easy to pipe the data for further processing as part of a cron job.
  
-
-show full channel list by change date
-```
-jq '.results[] | "\(.changed) \(.name)"' tvChannelList.json | sort
-```
- 
+- The script supports only one parameter: `-d`/`--debug` enables debug output.
