@@ -46,13 +46,13 @@ def addProgrammes(root_elem, programme_data):
                 startTime = dateutil.parser.isoparse(value['lower'])
                 stopTime = dateutil.parser.isoparse(value['upper'])
 
-                '''
+                # TV7 streams the More4+1 stream but has the More4 EPG data.
                 if result['channel']['canonical_name'] == "More4.uk":
                     if args['debug']:
                         print("Changing times for "+result['channel']['name'] )
                     startTime = startTime +  timedelta(hours=1)
                     stopTime = startTime +  timedelta(hours=1)
-                '''
+                
                 programme.set("start", startTime.strftime(DATE_FORMAT))
                 programme.set("stop", stopTime.strftime(DATE_FORMAT))
                 continue
