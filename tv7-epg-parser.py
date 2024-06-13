@@ -10,7 +10,7 @@ import socket
 
 import time
 
-BASE_URL = "https://tv7api2.tv.init7.net/api/"
+BASE_URL = "https://api.tv.init7.net/api/"
 DATE_FORMAT = '%Y%m%d%H%M%S%z'
 MAX_DOWNLOADS = 10
 MAX_FILE_AGE = 48*60*60
@@ -171,11 +171,9 @@ def _downloadFile(filename, url):
 # start building xmltv file
 ######
 
-# @GET("tvchannel/")
-# Call<TvChannelListResponse> tvChannelList();
-# curl "${BASE_URL}tvchannel/" > tvChannelList.json
-url = BASE_URL+"tvchannel/"
-filename = os.path.join(TMP_FOLDER, 'tvChannelList' + ".json")
+# URL found at https://www.init7.net/en/tv/channels/
+url = 'https://api.init7.net/fiber7-tv-channels.v2.json?lang_order=en&streaming_type=all'
+filename = os.path.join(TMP_FOLDER, 'fiber7-tv-channels.v2.json')
 _downloadFile(filename, url)
 root = etree.Element("tv")
 with open(filename) as json_file:
