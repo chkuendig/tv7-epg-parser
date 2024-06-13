@@ -35,8 +35,22 @@ def addChannels(root_elem, channels_data):
         icon_elem.set('src', result['logo'])
         root.append(channel)
 
+def checkProgrammesUnique(iterator):
+    try:
+        first = next(iterator)
+    except StopIteration:
+        return False
+    return not all(first['title'] == x['title'] for x in iterator)
 
 def addProgrammes(root_elem, programme_data):
+    if(len(programme_data) == 0):
+        return # epmty epg
+    
+    if(not checkProgrammesUnique(iter(programme_data))):
+        if args['debug']:
+            print("Skipping channel with placeholder data: "+ programme_data[0]['channel']['name'])
+        return # some channels only have placeholder data
+        
     for result in programme_data:
         programme = etree.Element("programme")
         for key, value in result.items():
