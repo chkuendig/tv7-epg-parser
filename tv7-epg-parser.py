@@ -44,12 +44,12 @@ def checkProgrammesUnique(iterator):
 
 def addProgrammes(root_elem, programme_data):
     if(len(programme_data) == 0):
-        return # epmty epg
+        return 0 # empty epg
     
     if(not checkProgrammesUnique(iter(programme_data))):
         if args['debug']:
             print("Skipping channel with placeholder data: "+ programme_data[0]['channel']['name'])
-        return # some channels only have placeholder data
+        return 0 # some channels only have placeholder data
         
     for result in programme_data:
         programme = etree.Element("programme")
@@ -145,7 +145,7 @@ def addProgrammes(root_elem, programme_data):
                 star_rating_elem = etree.SubElement(programme, 'star-rating')
                 star_rating_elem.text = value
         root_elem.append(programme)
-
+    return len(programme_data)
 
 def _file_age_in_seconds(pathname):
     return time.time() - os.path.getmtime(pathname)
@@ -193,7 +193,7 @@ root = etree.Element("tv")
 with open(filename) as json_file:
     channels_data = json.load(json_file)
     addChannels(root, channels_data['results'])
-
+    missing_epg = []
     for channel in channels_data['results']:
         channel_id = channel['pk']
 
@@ -212,7 +212,10 @@ with open(filename) as json_file:
                 programme_data = json.load(json_file)
 
                 if 'results' in programme_data:
-                    addProgrammes(root, programme_data['results'])
+                    programme_cnt = addProgrammes(root, programme_data['results'])
+                    if(programme_cnt == 0 and args['debug']):
+                        print("No EPG data for "+channel['name'])
+                        missing_epg.append(channel['name'])
                 else:
                     if args['debug']:
                         print(programme_data)
@@ -223,6 +226,10 @@ with open(filename) as json_file:
                     print("deleting file...")
                     os.remove(filename)
  
+    if args['debug']:
+        missing_epg.sort(key=str.casefold)
+        print("Fetching EPG done. Total %d channels, %d channels missing EPG: %s"%(len(channels_data['results']),len(missing_epg), ", ".join(missing_epg)))
+    
     doctype = '<!DOCTYPE tv SYSTEM "https://github.com/XMLTV/xmltv/raw/master/xmltv.dtd">'
     document_str = etree.tostring(
         root, pretty_print=True, xml_declaration=True, encoding="UTF-8", doctype=doctype)
