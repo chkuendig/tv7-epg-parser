@@ -10,7 +10,7 @@ import socket
 
 import time
 
-BASE_URL = "https://tv7api2.tv.init7.net/api/"
+BASE_URL = "https://api.tv.init7.net/api/"
 DATE_FORMAT = '%Y%m%d%H%M%S%z'
 MAX_DOWNLOADS = 10
 MAX_FILE_AGE = 48*60*60
@@ -35,8 +35,22 @@ def addChannels(root_elem, channels_data):
         icon_elem.set('src', result['logo'])
         root.append(channel)
 
+def checkProgrammesUnique(iterator):
+    try:
+        first = next(iterator)
+    except StopIteration:
+        return False
+    return not all(first['title'] == x['title'] for x in iterator)
 
 def addProgrammes(root_elem, programme_data):
+    if(len(programme_data) == 0):
+        return 0 # empty epg
+    
+    if(not checkProgrammesUnique(iter(programme_data))):
+        if args['debug']:
+            print("Skipping channel with placeholder data: "+ programme_data[0]['channel']['name'])
+        return 0 # some channels only have placeholder data
+        
     for result in programme_data:
         programme = etree.Element("programme")
         for key, value in result.items():
@@ -131,7 +145,7 @@ def addProgrammes(root_elem, programme_data):
                 star_rating_elem = etree.SubElement(programme, 'star-rating')
                 star_rating_elem.text = value
         root_elem.append(programme)
-
+    return len(programme_data)
 
 def _file_age_in_seconds(pathname):
     return time.time() - os.path.getmtime(pathname)
@@ -171,17 +185,15 @@ def _downloadFile(filename, url):
 # start building xmltv file
 ######
 
-# @GET("tvchannel/")
-# Call<TvChannelListResponse> tvChannelList();
-# curl "${BASE_URL}tvchannel/" > tvChannelList.json
-url = BASE_URL+"tvchannel/"
-filename = os.path.join(TMP_FOLDER, 'tvChannelList' + ".json")
+# URL found at https://www.init7.net/en/tv/channels/
+url = 'https://api.init7.net/fiber7-tv-channels.v2.json?lang_order=en&streaming_type=all'
+filename = os.path.join(TMP_FOLDER, 'fiber7-tv-channels.v2.json')
 _downloadFile(filename, url)
 root = etree.Element("tv")
 with open(filename) as json_file:
     channels_data = json.load(json_file)
     addChannels(root, channels_data['results'])
-
+    missing_epg = []
     for channel in channels_data['results']:
         channel_id = channel['pk']
 
@@ -200,7 +212,10 @@ with open(filename) as json_file:
                 programme_data = json.load(json_file)
 
                 if 'results' in programme_data:
-                    addProgrammes(root, programme_data['results'])
+                    programme_cnt = addProgrammes(root, programme_data['results'])
+                    if(programme_cnt == 0 and args['debug']):
+                        print("No EPG data for "+channel['name'])
+                        missing_epg.append(channel['name'])
                 else:
                     if args['debug']:
                         print(programme_data)
@@ -211,6 +226,10 @@ with open(filename) as json_file:
                     print("deleting file...")
                     os.remove(filename)
  
+    if args['debug']:
+        missing_epg.sort(key=str.casefold)
+        print("Fetching EPG done. Total %d channels, %d channels missing EPG: %s"%(len(channels_data['results']),len(missing_epg), ", ".join(missing_epg)))
+    
     doctype = '<!DOCTYPE tv SYSTEM "https://github.com/XMLTV/xmltv/raw/master/xmltv.dtd">'
     document_str = etree.tostring(
         root, pretty_print=True, xml_declaration=True, encoding="UTF-8", doctype=doctype)
@@ -218,11 +237,6 @@ with open(filename) as json_file:
     xmltv_file = os.path.join(TMP_FOLDER, 'init7-xmltv' + ".xml")
     with open(xmltv_file, 'wb') as f:
         f.write(document_str)
-
-    '''
-    with open(xmltv_file, 'r') as fin:
-        print(fin.read())
-    '''
 
     if os.path.exists(TVH_XMLTV_SOCKET):
         if S_ISSOCK(os.stat(TVH_XMLTV_SOCKET).st_mode):
@@ -252,4 +266,7 @@ with open(filename) as json_file:
     else:
         if args['debug']:
             print("XML Socket file doesn't exist")
+        else:
+            with open(xmltv_file, 'r') as fin:
+                print(fin.read())
         
