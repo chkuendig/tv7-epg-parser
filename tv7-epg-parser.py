@@ -238,11 +238,6 @@ with open(filename) as json_file:
     with open(xmltv_file, 'wb') as f:
         f.write(document_str)
 
-    '''
-    with open(xmltv_file, 'r') as fin:
-        print(fin.read())
-    '''
-
     if os.path.exists(TVH_XMLTV_SOCKET):
         if S_ISSOCK(os.stat(TVH_XMLTV_SOCKET).st_mode):
             if args['debug']:
@@ -271,4 +266,7 @@ with open(filename) as json_file:
     else:
         if args['debug']:
             print("XML Socket file doesn't exist")
+        else:
+            with open(xmltv_file, 'r') as fin:
+                print(fin.read())
         
