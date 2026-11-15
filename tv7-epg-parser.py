@@ -65,12 +65,10 @@ def addProgrammes(root_elem, programme_data, cutoff):
                 startTime = dateutil.parser.isoparse(value['lower'])
                 stopTime = dateutil.parser.isoparse(value['upper'])
 
-                # TV7 streams the More4+1 stream but has the More4 EPG data.
-                if result['channel']['canonical_name'] == "More4.uk":
-                    if args['debug']:
-                        print("Changing times for "+result['channel']['name'] )
-                    startTime = startTime +  timedelta(hours=1)
-                    stopTime = startTime +  timedelta(hours=1)
+                # Since the 2024-05-28 backend change the TV7 EPG for the
+                # More4+1 lineup channel already carries the +1 times (verified
+                # 2026-11-15 against published More4/More4+1 listings), so no
+                # shift is applied any more - the old workaround double-shifted.
 
                 if stopTime < cutoff:
                     skip = True
