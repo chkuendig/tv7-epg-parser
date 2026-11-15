@@ -5,15 +5,18 @@ from lxml import etree
 import dateutil.parser
 import requests
 from stat import S_ISSOCK
-from datetime import timedelta
+from datetime import timedelta, datetime, timezone
 import socket
 
 import time
 
 BASE_URL = "https://api.tv.init7.net/api/"
 DATE_FORMAT = '%Y%m%d%H%M%S%z'
-MAX_DOWNLOADS = 10
+MAX_DOWNLOADS = 50
 MAX_FILE_AGE = 48*60*60
+# Tvheadend keeps its own EPG database, so programmes that ended before this
+# horizon are dropped instead of re-sent on every run.
+KEEP_PAST = timedelta(hours=6)
 TMP_FOLDER = "tmp/"
 TVH_XMLTV_SOCKET = "epggrab/xmltv.sock"
 arg_parser = argparse.ArgumentParser(
@@ -42,17 +45,19 @@ def checkProgrammesUnique(iterator):
         return False
     return not all(first['title'] == x['title'] for x in iterator)
 
-def addProgrammes(root_elem, programme_data):
+def addProgrammes(root_elem, programme_data, cutoff):
     if(len(programme_data) == 0):
         return 0 # empty epg
-    
+
     if(not checkProgrammesUnique(iter(programme_data))):
         if args['debug']:
             print("Skipping channel with placeholder data: "+ programme_data[0]['channel']['name'])
         return 0 # some channels only have placeholder data
-        
+
+    added = 0
     for result in programme_data:
         programme = etree.Element("programme")
+        skip = False
         for key, value in result.items():
             if key == 'pk':
                 continue
@@ -66,7 +71,11 @@ def addProgrammes(root_elem, programme_data):
                         print("Changing times for "+result['channel']['name'] )
                     startTime = startTime +  timedelta(hours=1)
                     stopTime = startTime +  timedelta(hours=1)
-                
+
+                if stopTime < cutoff:
+                    skip = True
+                    break
+
                 programme.set("start", startTime.strftime(DATE_FORMAT))
                 programme.set("stop", stopTime.strftime(DATE_FORMAT))
                 continue
@@ -144,8 +153,11 @@ def addProgrammes(root_elem, programme_data):
             elif key == 'star_rating' and value:
                 star_rating_elem = etree.SubElement(programme, 'star-rating')
                 star_rating_elem.text = value
+        if skip:
+            continue
         root_elem.append(programme)
-    return len(programme_data)
+        added = added + 1
+    return added
 
 def _file_age_in_seconds(pathname):
     return time.time() - os.path.getmtime(pathname)
@@ -193,6 +205,7 @@ root = etree.Element("tv")
 with open(filename) as json_file:
     channels_data = json.load(json_file)
     addChannels(root, channels_data['results'])
+    cutoff = datetime.now(timezone.utc) - KEEP_PAST
     missing_epg = []
     for channel in channels_data['results']:
         channel_id = channel['pk']
@@ -212,7 +225,7 @@ with open(filename) as json_file:
                 programme_data = json.load(json_file)
 
                 if 'results' in programme_data:
-                    programme_cnt = addProgrammes(root, programme_data['results'])
+                    programme_cnt = addProgrammes(root, programme_data['results'], cutoff)
                     if(programme_cnt == 0 and args['debug']):
                         print("No EPG data for "+channel['name'])
                         missing_epg.append(channel['name'])
@@ -225,7 +238,15 @@ with open(filename) as json_file:
                     print(e)
                     print("deleting file...")
                     os.remove(filename)
- 
+
+    # Drop cached EPG for channels that are no longer in the lineup.
+    current_caches = {'getEPG-'+c['pk']+'.json' for c in channels_data['results']}
+    for cache_file in os.listdir(TMP_FOLDER):
+        if cache_file.startswith('getEPG-') and cache_file not in current_caches:
+            if args['debug']:
+                print("Removing stale cache file "+cache_file)
+            os.remove(os.path.join(TMP_FOLDER, cache_file))
+
     if args['debug']:
         missing_epg.sort(key=str.casefold)
         print("Fetching EPG done. Total %d channels, %d channels missing EPG: %s"%(len(channels_data['results']),len(missing_epg), ", ".join(missing_epg)))
