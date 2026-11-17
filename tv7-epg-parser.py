@@ -7,6 +7,7 @@ import requests
 from stat import S_ISSOCK
 from datetime import timedelta, datetime, timezone
 import socket
+import tempfile
 
 import time
 
@@ -14,6 +15,9 @@ BASE_URL = "https://api.tv.init7.net/api/"
 DATE_FORMAT = '%Y%m%d%H%M%S%z'
 MAX_DOWNLOADS = 50
 MAX_FILE_AGE = 48*60*60
+MAX_PAGES = 10
+MIN_COVERAGE = timedelta(hours=24)
+MIN_REFRESH_AGE = 6*60*60
 # Tvheadend keeps its own EPG database, so programmes that ended before this
 # horizon are dropped instead of re-sent on every run.
 KEEP_PAST = timedelta(hours=6)
@@ -171,19 +175,62 @@ def is_valid_json(myjson):
 downloadCount = 0
 
 
-def _downloadFile(filename, url):
+def _downloadFile(filename, url, paginated=False):
     global downloadCount
-    if not os.path.isfile(filename) or (downloadCount < MAX_DOWNLOADS and _file_age_in_seconds(filename) > MAX_FILE_AGE):
-        if args['debug']:
-            print("downloading ", url)
-        r = requests.get(url, allow_redirects=True)
-        if(is_valid_json(r.content)):
-            open(filename, 'wb').write(r.content)
-        time.sleep(1)
-        downloadCount = downloadCount+1
-    else:
-        if args['debug']:
-            print("skipping %s already downloaded to %s"%( url, filename))
+    results = []
+    pages = 0
+    try:
+        while url:
+            if downloadCount >= MAX_DOWNLOADS or pages >= MAX_PAGES:
+                raise ValueError("download budget or page limit reached")
+            if args['debug']:
+                print("downloading ", url)
+            downloadCount += 1
+            pages += 1
+            r = requests.get(url, allow_redirects=False, timeout=30)
+            r.raise_for_status()
+            if r.status_code >= 300:
+                raise ValueError("unexpected HTTP redirect")
+            data = r.json()
+            if not isinstance(data, dict):
+                raise ValueError("invalid response")
+            time.sleep(1)
+            if paginated:
+                if not isinstance(data.get('results'), list) or 'next' not in data:
+                    raise ValueError("invalid EPG page")
+                results.extend(data['results'])
+                url = data['next']
+            else:
+                url = None
+        if paginated:
+            data['results'] = results
+            data['next'] = None
+        with tempfile.NamedTemporaryFile(mode='w', dir=TMP_FOLDER, delete=False) as f:
+            tempname = f.name
+            try:
+                json.dump(data, f)
+            except Exception:
+                os.unlink(tempname)
+                raise
+        try:
+            os.chmod(tempname, 0o644)
+            os.replace(tempname, filename)
+        finally:
+            if os.path.exists(tempname):
+                os.unlink(tempname)
+    except (requests.RequestException, ValueError, TypeError, KeyError) as e:
+        print("Download failed for %s: %s" % (filename, e))
+
+
+def _coverage(filename):
+    try:
+        with open(filename) as f:
+            data = json.load(f)
+        ends = [dateutil.parser.isoparse(p['timeslot']['upper']) for p in data['results']]
+        return max(ends, default=datetime.min.replace(tzinfo=timezone.utc))
+    except (OSError, ValueError, TypeError, KeyError):
+        return datetime.min.replace(tzinfo=timezone.utc)
+
 
 # @GET("allowed/")
 # Call<AllowedResponse> allowed();
@@ -198,25 +245,39 @@ def _downloadFile(filename, url):
 # URL found at https://www.init7.net/en/tv/channels/
 url = 'https://api.init7.net/fiber7-tv-channels.v2.json?lang_order=en&streaming_type=all'
 filename = os.path.join(TMP_FOLDER, 'fiber7-tv-channels.v2.json')
-_downloadFile(filename, url)
+if not os.path.isfile(filename) or _file_age_in_seconds(filename) > MAX_FILE_AGE:
+    _downloadFile(filename, url)
 root = etree.Element("tv")
 with open(filename) as json_file:
     channels_data = json.load(json_file)
     addChannels(root, channels_data['results'])
     cutoff = datetime.now(timezone.utc) - KEEP_PAST
     missing_epg = []
-    for channel in channels_data['results']:
-        channel_id = channel['pk']
+    # Spend the limited request budget on the channels with the least coverage first.
+    now = datetime.now(timezone.utc)
+    channels = channels_data['results']
+    def cache_path(channel):
+        return os.path.join(TMP_FOLDER, 'getEPG-'+channel['pk']+'.json')
 
-        # @GET("epg/")
-        # Call<EPGListResponse> getEPG(@Query("channel") String paramString);
-        # curl "${BASE_URL}epg/?channel=4c8a7d39-009d-4835-b6f9-69c7268fd9d4" > getEPG-channel.json
-        url = BASE_URL+"epg/?channel="+channel_id+"&limit=999"
+    candidates = []
+    for channel in channels:
+        filename = cache_path(channel)
+        coverage = _coverage(filename)
+        age = _file_age_in_seconds(filename) if os.path.isfile(filename) else float('inf')
+        if age > MAX_FILE_AGE or (coverage < now + MIN_COVERAGE and age >= MIN_REFRESH_AGE):
+            # A recently refreshed channel must not starve other expired caches.
+            last_refresh = datetime.fromtimestamp(os.path.getmtime(filename), timezone.utc) if os.path.isfile(filename) else coverage
+            candidates.append((max(coverage, last_refresh), channel))
+    for coverage, channel in sorted(candidates, key=lambda item: item[0]):
+        if downloadCount >= MAX_DOWNLOADS:
+            break
+        url = BASE_URL+"epg/?channel="+channel['pk']+"&limit=999"
+        _downloadFile(cache_path(channel), url, paginated=True)
 
-        filename = os.path.join(
-            TMP_FOLDER, 'getEPG-'+channel_id + ".json")
-        _downloadFile(filename, url)
-
+    for channel in channels:
+        filename = cache_path(channel)
+        if not os.path.isfile(filename):
+            continue
         with open(filename) as json_file:
 
             try:
